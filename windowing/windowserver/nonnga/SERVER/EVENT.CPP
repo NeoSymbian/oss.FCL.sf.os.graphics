@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): no raw event receiver (no event hook) in guest mode under neoui.
 // Description:
 // Top level window server code
 // 
@@ -217,8 +217,12 @@ void TWindowServerEvent::InitStaticsL()
 #if defined(__WINS__)
 	WS_ASSERT_DEBUG(TWindowServerEvent::ENumHotKeys==EHotKeyLastKeyType+1, EWsPanicUnknownCaptureKey);
 #endif
-	iEventReceiver=new(ELeave) CRawEventReceiver(EEventPriority);
-	iEventReceiver->ConstructL();
+	extern TBool NeoSymbianGuestWserv;	// NeoSymbian (WSTOP.CPP): neoui owns the event hook; input via SimulateRawEvent
+	if (!NeoSymbianGuestWserv)
+		{
+		iEventReceiver=new(ELeave) CRawEventReceiver(EEventPriority);
+		iEventReceiver->ConstructL();
+		}
 	iKeyTranslator=CKeyTranslator::New();
 	User::LeaveIfNull(iKeyTranslator);
 

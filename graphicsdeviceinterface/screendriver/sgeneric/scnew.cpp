@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): a guest window server under neoui draws into neoui's NeoUiLegacy chunk.
 // Description:
 // This module implements the functions that create the screen class depending
 // on the screen type.
@@ -297,6 +297,13 @@ TInt CScreenDeviceHelper::Construct(TInt aScreenNo, TUidPixelFormat aPixelFormat
 
 	TInt val = 0;
 	iHasChunk = EFalse;
+	// NeoSymbian: under neoui the stock window server is a guest -- it draws into the global chunk "NeoUiLegacy" that
+	// neoui's LEGACY.EXE made with the display's own geometry (HAL size, stride, first-pixel offset), not the display
+	if (iChunk.OpenGlobal(_L("NeoUiLegacy"), EFalse) == KErrNone)
+		{
+		iHasChunk = ETrue;
+		return iSurfaceUpdateSession.Connect();
+		}
 	TInt ret = HAL::Get(aScreenNo,HALData::EDisplayMemoryHandle,val);
 	if (ret == KErrNone)
 		{

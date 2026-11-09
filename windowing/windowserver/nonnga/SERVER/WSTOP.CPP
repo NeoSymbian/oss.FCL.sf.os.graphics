@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): guest mode under neoui (NeoUiLegacy): no display/event ownership, not critical.
 // Description:
 // Top level window server code
 // 
@@ -42,6 +42,7 @@
 #include <e32power.h>
 #endif
 #include "graphics/windowserverconstants.h"
+extern TBool NeoSymbianGuestWserv;	// NeoSymbian: defined above E32Main
 
 typedef CDebugLogBase *(*CreateDebugLog)(TBool aIsFirst, TDesC &aParams);
 
@@ -470,7 +471,10 @@ void CWsTop::InitStaticsL()
 		{
 		StartShell();
 		}
-	UserSvr::WsRegisterSwitchOnScreenHandling(ETrue);
+	if (!NeoSymbianGuestWserv)	// NeoSymbian: a guest leaves the display to neoui
+		{
+		UserSvr::WsRegisterSwitchOnScreenHandling(ETrue);
+		}
 	}
 
 
@@ -988,16 +992,27 @@ TFullName CWsShellLogon::FullName()
 
 
 
+// NeoSymbian: ETrue when neoui owns the display and the input (its LEGACY.EXE made the chunk "NeoUiLegacy"): this
+// window server is then a guest -- it draws into that chunk (screendriver scnew.cpp), takes no event hook (EVENT.CPP)
+// and gets its input from LEGACY.EXE through RWsSession::SimulateRawEvent
+TBool NeoSymbianGuestWserv = EFalse;
+
 TInt E32Main()
 	{
 	__UHEAP_MARK;
 
-	UserSvr::WsRegisterThread();
+	RChunk neoLegacy;
+	NeoSymbianGuestWserv = neoLegacy.OpenGlobal(_L("NeoUiLegacy"), ETrue) == KErrNone;
+	neoLegacy.Close();
+	if (!NeoSymbianGuestWserv)	// neoui is the registered window server thread
+		{
+		UserSvr::WsRegisterThread();
+		}
 
 	RThread thread;
 	// Set wserv's main thread to system permanent
 	TInt err;
-	err = User::SetCritical(User::ESystemPermanent);
+	err = NeoSymbianGuestWserv ? KErrNone : User::SetCritical(User::ESystemPermanent);	// NeoSymbian: a guest may die
 	if (err!=KErrNone)
 		{
 		WS_PANIC_ALWAYS(EWsPanicFailedToSetThread);
@@ -1031,7 +1046,10 @@ TInt E32Main()
 			{
 			WS_PANIC_ALWAYS(EWsPanicFailedToInitialise);
 			}
-		UserSvr::ReleaseEventHook();
+		if (!NeoSymbianGuestWserv)	// NeoSymbian: a guest never captured it
+			{
+			UserSvr::ReleaseEventHook();
+			}
 		delete CleanUpStack;
 		} while	(CWsTop::NeedsHeapCheckAndRestart(startCount));
 
