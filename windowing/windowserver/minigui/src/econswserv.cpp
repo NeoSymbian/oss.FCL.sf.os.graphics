@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): ReadCancel completes the pending read with KErrCancel.
 // Description:
 //
 
@@ -504,6 +504,8 @@ void CWsConsole::Read(TRequestStatus &aStatus)
 void CWsConsole::ReadCancel()
 	{
 	iMux->CancelRequest(this);
+	if (iReadStatus && *iReadStatus == KRequestPending)	// NeoSymbian: a cancel must complete the read (CActive::Cancel
+		User::RequestComplete(iReadStatus, KErrCancel);	// waits for it; fshell's consoleproxy hung here)
 	iReadStatus = NULL;
 	}
 
