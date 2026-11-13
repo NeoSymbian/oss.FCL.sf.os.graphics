@@ -9,7 +9,7 @@
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-// The NeoSymbian Authors (2026): a guest window server under neoui draws into neoui's NeoUiLegacy chunk.
+// The NeoSymbian Authors (2026): a guest window server under neoui draws into neoui's NeoUiLegacy chunk, at its header's size.
 // Description:
 // This module implements the functions that create the screen class depending
 // on the screen type.
@@ -28,6 +28,46 @@
 #include "scdraw.inl"
 #include <graphics/gdi/gdiconsts.h>
 #include <graphics/suerror.h>
+// NeoSymbian: under neoui a guest window server draws into LEGACY.EXE's global chunk "NeoUiLegacy". Its header gives the
+// guest screen's geometry -- smaller than the panel (old apps' 360x640; a phone-sized guest runs the window server out of
+// memory) -- so every display query of this driver goes through ScreenHal: the guest screen when the chunk exists,
+// else the HAL as before. Twips stay the panel's: the guest fills the same glass.
+namespace
+	{
+	const TUint32 KNeoLegacyMagic = 0x4C4F454E;		// "NEOL"
+	struct TNeoLegacyHeader { TUint32 iMagic; TInt32 iWidth, iHeight, iStride, iOffset; };
+
+	TInt ScreenHal(TInt aScreenNo, HALData::TAttribute aAttr, TInt& aValue)
+		{
+		RChunk chunk;
+		if (chunk.OpenGlobal(_L("NeoUiLegacy"), ETrue) == KErrNone)
+			{
+			const TNeoLegacyHeader h = *reinterpret_cast<const TNeoLegacyHeader*>(chunk.Base());
+			chunk.Close();
+			const TBool flipped = (aValue & TSurfaceId::TScreenSurfaceUsage::EHalFlippedFlag) != 0;
+			if (h.iMagic == KNeoLegacyMagic)
+				switch (aAttr)
+					{
+				case HALData::EDisplayXPixels: aValue = h.iWidth; return KErrNone;
+				case HALData::EDisplayYPixels: aValue = h.iHeight; return KErrNone;
+				case HALData::EDisplayOffsetBetweenLines:	// a mode in, the value out; no rotated guest
+					if (flipped)
+						return KErrNotSupported;
+					aValue = h.iStride;
+					return KErrNone;
+				case HALData::EDisplayOffsetToFirstPixel:
+					if (flipped)
+						return KErrNotSupported;
+					aValue = h.iOffset;
+					return KErrNone;
+				default:
+					break;
+					}
+			}
+		return HAL::Get(aScreenNo, aAttr, aValue);
+		}
+	}
+
 /**
 Creates an instance of CFbsDrawDevice class.
 @param aScreenNo Screen number
@@ -51,7 +91,7 @@ static CFbsDrawDevice* CreateInstanceL(TInt aScreenNo,
 	//because they are distinct color component patterns (x444, 565)
 	//but for now 24 and 32 bit modes are considered equivalent here.
 
-	if (HAL::Get(aScreenNo, HALData::EDisplayNumModes,modeCount)== KErrNone && modeCount>=1)
+	if (ScreenHal(aScreenNo, HALData::EDisplayNumModes,modeCount)== KErrNone && modeCount>=1)
 		{	//If multiple modes are supported then the highest bpp must be found
 		
 		TInt reqBpp= TDisplayModeUtils::NumDisplayModeBitsPerPixel(aDispMode);
@@ -68,7 +108,7 @@ static CFbsDrawDevice* CreateInstanceL(TInt aScreenNo,
 		for (TInt mode=0; mode<modeCount; mode++)
 			{
 			TInt modeBpp=mode;
-			if(HAL::Get(aScreenNo, HALData::EDisplayBitsPerPixel, modeBpp) == KErrNone)
+			if(ScreenHal(aScreenNo, HALData::EDisplayBitsPerPixel, modeBpp) == KErrNone)
 				{
 				if (modeBpp==reqBpp || modeBpp==reqBpp2)
 					{
@@ -256,8 +296,8 @@ EXPORT_C CFbsDrawDevice* CFbsDrawDevice::NewScreenDeviceL(TInt aScreenNo,
 														  TDisplayMode aDispMode)
 	{
 	TInt width = 0, height = 0;
-	User::LeaveIfError(HAL::Get(aScreenNo, HALData::EDisplayXPixels, width));
-	User::LeaveIfError(HAL::Get(aScreenNo, HALData::EDisplayYPixels, height));
+	User::LeaveIfError(ScreenHal(aScreenNo, HALData::EDisplayXPixels, width));
+	User::LeaveIfError(ScreenHal(aScreenNo, HALData::EDisplayYPixels, height));
 	__ASSERT_ALWAYS(width > 0 && height > 0, Panic(EScreenDriverPanicInvalidHalValue));
 	
 	TUint8* address = 0;
@@ -304,7 +344,7 @@ TInt CScreenDeviceHelper::Construct(TInt aScreenNo, TUidPixelFormat aPixelFormat
 		iHasChunk = ETrue;
 		return iSurfaceUpdateSession.Connect();
 		}
-	TInt ret = HAL::Get(aScreenNo,HALData::EDisplayMemoryHandle,val);
+	TInt ret = ScreenHal(aScreenNo,HALData::EDisplayMemoryHandle,val);
 	if (ret == KErrNone)
 		{
 		__ASSERT_DEBUG(val != 0, Panic(EScreenDriverPanicInvalidHalValue));
@@ -446,7 +486,7 @@ TUint CScreenDeviceHelper::DeviceOrientationsAvailable(const TSize& aScreenSize)
 		}
 	//Query base HAL for rotated view support
 	TInt	offset1=iSurface.iInternal[TSurfaceId::TScreenSurfaceUsage::EHalField]|TSurfaceId::TScreenSurfaceUsage::EHalFlippedFlag;
-	if (	HAL::Get(ScreenNumber(), HALData::EDisplayOffsetBetweenLines, offset1)==KErrNone
+	if (	ScreenHal(ScreenNumber(), HALData::EDisplayOffsetBetweenLines, offset1)==KErrNone
 		&&	offset1!=0)
 		{
 		return EDeviceOrientationNormal | EDeviceOrientation90CW |
@@ -527,8 +567,8 @@ TBool CScreenDeviceHelper::SetDeviceFlipMode(TBool aFlip, TSize& aNewSize)
 		return EFalse;
 		}
 	TInt err=0;
-	err|=HAL::Get(ScreenNumber(), HALData::EDisplayXPixels, aNewSize.iWidth);
-	err|=HAL::Get(ScreenNumber(), HALData::EDisplayYPixels, aNewSize.iHeight);
+	err|=ScreenHal(ScreenNumber(), HALData::EDisplayXPixels, aNewSize.iWidth);
+	err|=ScreenHal(ScreenNumber(), HALData::EDisplayYPixels, aNewSize.iHeight);
 	__ASSERT_ALWAYS(err==KErrNone,Panic(EScreenDriverPanicInvalidHalValue));
 	 if (aNewSize.iWidth==aNewSize.iHeight)
 		{	//Attempt optimisation to not flip if the screen is square, so avoid recomposition.
@@ -539,13 +579,13 @@ TBool CScreenDeviceHelper::SetDeviceFlipMode(TBool aFlip, TSize& aNewSize)
 		//Does the rotated mode have any other attributes that differ?
 		//It is just about possible to imagine that the rotated display 
 		//wants to use a different setting for the flipped legacy buffer for optimisation purposes.
-		err|=HAL::Get(ScreenNumber(), HALData::EDisplayOffsetToFirstPixel, offset1);
-		err|=HAL::Get(ScreenNumber(), HALData::EDisplayOffsetBetweenLines, stride1);
+		err|=ScreenHal(ScreenNumber(), HALData::EDisplayOffsetToFirstPixel, offset1);
+		err|=ScreenHal(ScreenNumber(), HALData::EDisplayOffsetBetweenLines, stride1);
 		//The existing mode settings should not fail... we are already in this mode!
 		__ASSERT_ALWAYS(err==KErrNone,Panic(EScreenDriverPanicInvalidHalValue));
 		
-		TInt rotatedErr =	HAL::Get(ScreenNumber(), HALData::EDisplayOffsetToFirstPixel, offset2);
-		rotatedErr |=		HAL::Get(ScreenNumber(), HALData::EDisplayOffsetBetweenLines, stride2);
+		TInt rotatedErr =	ScreenHal(ScreenNumber(), HALData::EDisplayOffsetToFirstPixel, offset2);
+		rotatedErr |=		ScreenHal(ScreenNumber(), HALData::EDisplayOffsetBetweenLines, stride2);
 		//The HAL may indicate rotation is not required by failing to return data or returning the same data
 		if ( rotatedErr!=KErrNone || stride2==0 ) //Offset can legitimately be zero.
 			{	
@@ -573,7 +613,7 @@ TBool CScreenDeviceHelper::SetDeviceFlipMode(TBool aFlip, TSize& aNewSize)
 TUint CScreenDeviceHelper::BytesPerScanline() const
 	{
 	TInt linepitchInBytes = iSurface.iInternal[TSurfaceId::TScreenSurfaceUsage::EHalField];
-	TInt ret = HAL::Get(ScreenNumber(),HALData::EDisplayOffsetBetweenLines,linepitchInBytes);
+	TInt ret = ScreenHal(ScreenNumber(),HALData::EDisplayOffsetBetweenLines,linepitchInBytes);
 	if (ret!=KErrNone)
 		{
 		return 0;
@@ -596,14 +636,14 @@ void* CScreenDeviceHelper::AddressFirstPixel() const
 	else 
 		{
 		// Chunk not supported, use older HAL call to get the buffer address. 
-		ret = HAL::Get(ScreenNumber(),HALData::EDisplayMemoryAddress,bufferStartAddress);	
+		ret = ScreenHal(ScreenNumber(),HALData::EDisplayMemoryAddress,bufferStartAddress);	
 		if (ret!=KErrNone)
 			{
 			return 0;
 			}
 		}
 	TInt bufferOffsetFirstPixel = iSurface.iInternal[TSurfaceId::TScreenSurfaceUsage::EHalField];
-	ret = HAL::Get(ScreenNumber(),HALData::EDisplayOffsetToFirstPixel,bufferOffsetFirstPixel);
+	ret = ScreenHal(ScreenNumber(),HALData::EDisplayOffsetToFirstPixel,bufferOffsetFirstPixel);
 	if (ret!=KErrNone)
 		{
 		return 0;
@@ -635,7 +675,7 @@ TInt	CScreenDeviceHelper::HorzTwipsPerThousandPixels(const TSize& aPixels)const
 	__ASSERT_DEBUG(aPixels.iWidth, Panic(EScreenDriverPanicInvalidSize));
 	
 	TInt width = 0;
-	TInt r = HAL::Get(ScreenNumber(), SecondIfFlipped(HAL::EDisplayXTwips,HAL::EDisplayYTwips), width);
+	TInt r = ScreenHal(ScreenNumber(), SecondIfFlipped(HAL::EDisplayXTwips,HAL::EDisplayYTwips), width);
 	__ASSERT_DEBUG(r==KErrNone && width!=0, Panic(EScreenDriverPanicInvalidHalValue));
    
 	return (width * 1000) / aPixels.iWidth;
@@ -647,7 +687,7 @@ TInt	CScreenDeviceHelper::VertTwipsPerThousandPixels(const TSize& aPixels)const
 	__ASSERT_DEBUG(aPixels.iHeight, Panic(EScreenDriverPanicInvalidSize));
 
 	TInt height = 0;
-	TInt r = HAL::Get(ScreenNumber(), SecondIfFlipped(HAL::EDisplayYTwips,HAL::EDisplayXTwips), height);
+	TInt r = ScreenHal(ScreenNumber(), SecondIfFlipped(HAL::EDisplayYTwips,HAL::EDisplayXTwips), height);
 	__ASSERT_DEBUG(r==KErrNone && height!=0, Panic(EScreenDriverPanicInvalidHalValue));
 
 	return (height * 1000) / aPixels.iHeight;
